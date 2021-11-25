@@ -16,6 +16,7 @@ import Control.Arrow (second)
 import Data.Monoid (mempty)
 
 import qualified Network.HTTP.Types as W
+import Network.HTTP.Types.Header
 import Network.URI (parseURIReference, escapeURIString, isAllowedInURI)
 
 import Network.HTTP.Client.Types
@@ -52,7 +53,7 @@ import Data.KeyedPool
 getRedirectedRequest :: Request -> W.ResponseHeaders -> CookieJar -> Int -> Maybe Request
 getRedirectedRequest req hs cookie_jar code
     | 300 <= code && code < 400 = do
-        l' <- lookup "location" hs
+        l' <- lookup hLocation hs
         let l = escapeURIString isAllowedInURI (S8.unpack l')
             stripHeaders r =
               r{requestHeaders =
@@ -68,7 +69,7 @@ getRedirectedRequest req hs cookie_jar code
                     { method = "GET"
                     , requestBody = RequestBodyBS ""
                     , cookieJar = cookie_jar'
-                    , requestHeaders = filter ((/= W.hContentType) . fst) $ requestHeaders req'
+                    , requestHeaders = filter ((/= hContentType) . fst) $ requestHeaders req'
                     }
                 else req' {cookieJar = cookie_jar'}
     | otherwise = Nothing
@@ -92,11 +93,11 @@ getResponse :: Maybe Int
 getResponse timeout' req@(Request {..}) mconn cont = do
     let conn = managedResource mconn
     StatusHeaders s version hs <- parseStatusHeaders conn timeout' cont
-    let mcl = lookup "content-length" hs >>= readPositiveInt . S8.unpack
-        isChunked = ("transfer-encoding", CI.mk "chunked") `elem` map (second CI.mk) hs
+    let mcl = lookup hContentLength hs >>= readPositiveInt . S8.unpack
+        isChunked = (hTransferEncoding, CI.mk "chunked") `elem` map (second CI.mk) hs
 
         -- should we put this connection back into the connection manager?
-        toPut = Just "close" /= lookup "connection" hs && version > W.HttpVersion 1 0
+        toPut = Just "close" /= lookup hConnection hs && version > W.HttpVersion 1 0
         cleanup bodyConsumed = managedRelease mconn $ if toPut && bodyConsumed then Reuse else DontReuse
 
     body <-
