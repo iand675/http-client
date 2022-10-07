@@ -303,6 +303,24 @@ defaultRequest = Request
         , requestManagerOverride = Nothing
         , shouldStripHeaderOnRedirect = const False
         , proxySecureMode = ProxySecureWithConnect
+        , hooks = RequestTrace
+            { getConnection = \_ _ -> pure ()
+            , gotConnection = \_ -> pure ()
+            , putIdleConnection = \_ -> pure ()
+            , gotFirstResponseByte = pure ()
+            , got100Continue = pure ()
+            , got1xxResponse = \_ _ -> pure Nothing
+            , dnsStart = \_ -> pure ()
+            , dnsDone = \_ -> pure ()
+            , connectStart = \_ _ -> pure ()
+            , connectDone = \_ _ _ -> pure ()
+            , tlsHandshakeStart = pure ()
+            , tlsHandshakeDone = \_ -> pure ()
+            , wroteHeaderField = \_ -> pure ()
+            , wroteHeaders = pure ()
+            , wait100Continue = pure ()
+            , wroteRequest = \_ -> pure ()
+            }
         }
 
 -- | Parses a URL via 'parseRequest_'

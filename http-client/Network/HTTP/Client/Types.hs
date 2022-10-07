@@ -38,6 +38,10 @@ module Network.HTTP.Client.Types
     , StreamFileStatus (..)
     , ResponseTimeout (..)
     , ProxySecureMode (..)
+    , RequestTrace (..)
+    , GotConnectionInfo (..)
+    , DNSStartInfo (..)
+    , DNSDoneInfo (..)
     ) where
 
 import qualified Data.Typeable as T (Typeable)
@@ -63,6 +67,7 @@ import Data.Text (Text)
 import Data.Streaming.Zlib (ZlibException)
 import Data.CaseInsensitive as CI
 import Data.KeyedPool (KeyedPool)
+import Data.ByteString (ByteString)
 
 -- | An @IO@ action that represents an incoming response body coming from the
 -- server. Data provided by this action has already been gunzipped and
@@ -617,6 +622,11 @@ data Request = Request
     -- Default: Use HTTP CONNECT.
     --
     -- @since 0.7.2
+    , hooks :: RequestTrace
+    -- ^ Hooks for performing actions on different portions of the
+    -- request lifecycle. Default: does nothing.
+    --
+    -- @since 0.7.10
     }
     deriving T.Typeable
 
@@ -868,3 +878,95 @@ data StreamFileStatus = StreamFileStatus
     , thisChunkSize :: Int
     }
     deriving (Eq, Show, Ord, T.Typeable)
+
+-- | Hooks for tracing client behaviour across a request
+--
+-- @since 0.7.10
+data RequestTrace = RequestTrace
+  { getConnection :: NS.HostName -> NS.PortNumber -> IO ()
+  -- ^ GetConn is called before a connection is created or
+  -- retrieved from an idle pool. The hostPort is the
+  -- "host:port" of the target or proxy. getConnection is called even
+  -- if there's already an idle cached connection available.
+  , gotConnection :: GotConnectionInfo -> IO ()
+  -- ^ GotConn is called after a successful connection is
+  -- obtained. There is no hook for failure to obtain a
+  -- connection; instead, use the error from
+  -- Transport.RoundTrip.
+  , putIdleConnection :: Maybe SomeException -> IO ()
+  --	PutIdleConn is called when the connection is returned to
+  -- the idle pool. If err is nil, the connection was
+  -- successfully returned to the idle pool. If err is non-nil,
+  -- it describes why not. PutIdleConn is not called if
+  -- connection reuse is disabled via Transport.DisableKeepAlives.
+  -- PutIdleConn is called before the caller's Response.Body.Close
+  -- call returns.
+  -- For HTTP/2, this hook is not currently used.
+  , gotFirstResponseByte :: IO ()
+  -- ^ GotFirstResponseByte is called when the first byte of the response
+  -- headers is available.
+  , got100Continue :: IO ()
+  -- ^ Got100Continue is called if the server replies with a "100
+  -- Continue" response.
+  , got1xxResponse :: Status -> ResponseHeaders -> IO (Maybe SomeException)
+  -- ^ Got1xxResponse is called for each 1xx informational response header
+  -- returned before the final non-1xx response. Got1xxResponse is called
+  -- for "100 Continue" responses, even if Got100Continue is also defined.
+  -- If it returns an error, the client request is aborted with that error value.
+  , dnsStart :: DNSStartInfo -> IO ()
+  -- ^ DNSStart is called when a DNS lookup begins.
+  , dnsDone :: DNSDoneInfo -> IO ()
+  -- ^ DNSDone is called when a DNS lookup ends.
+  , connectStart :: String -> String -> IO ()
+  -- ^ ConnectStart is called when a new connection's Dial begins.
+  -- This may be called multiple times.
+  , connectDone :: String -> String -> Maybe SomeException -> IO ()
+  -- ^ ConnectDone is called when a new connection's Dial
+  -- completes. The provided err indicates whether the
+  -- connection completed successfully.
+  -- If net.Dialer.DualStack ("Happy Eyeballs") support is
+  -- enabled, this may be called multiple times.
+  , tlsHandshakeStart :: IO ()
+  -- ^ TLSHandshakeStart is called when the TLS handshake is started. When
+  -- connecting to an HTTPS site via an HTTP proxy, the handshake happens
+  -- after the CONNECT request is processed by the proxy.
+  -- TODO TLS state depends on impl?
+  , tlsHandshakeDone :: () -> IO ()
+  -- ^ TLSHandshakeDone is called after the TLS handshake with either the
+  -- successful handshake's connection state, or a non-nil error on handshake
+  -- failure.
+  , wroteHeaderField :: [(ByteString, [ByteString])] -> IO ()
+  -- ^ WroteHeaderField is called after the Transport has written
+  -- each request header. At the time of this call the values
+  -- might be buffered and not yet written to the network.
+  , wroteHeaders :: IO ()
+  -- ^ WroteHeaders is called after the Transport has written
+  -- all request headers.
+  , wait100Continue :: IO ()
+  -- ^ Wait100Continue is called if the Request specified
+  -- "Expect: 100-continue" and the Transport has written the
+  -- request headers but is waiting for "100 Continue" from the
+  -- server before writing the request body.
+  , wroteRequest :: WroteRequestInfo -> IO ()
+  -- ^ WroteRequest is called with the result of writing the
+  -- request and any body. It may be called multiple times
+  -- in the case of retried requests.
+  }
+
+data GotConnectionInfo = GotConnectionInfo
+  { connection :: Connection
+  , reused :: Bool
+  , idleTime :: Maybe UTCTime
+  }
+
+newtype DNSStartInfo = DNSStartInfo 
+  { domain :: String
+  }
+
+data DNSDoneInfo 
+  = DNSDoneAddresses [NS.AddrInfo]
+  | DNSDoneError SomeException
+
+newtype WroteRequestInfo = WroteRequestInfo
+  { requestWriteError :: Maybe SomeException
+  }
