@@ -27,6 +27,7 @@ import Data.Time.Calendar
 import Web.Cookie
 import qualified Data.CaseInsensitive as CI
 import Blaze.ByteString.Builder
+import Network.HTTP.Types.Header
 import qualified Network.PublicSuffixList.Lookup as PSL
 import Data.Text.Encoding (decodeUtf8With)
 import Data.Text.Encoding.Error (lenientDecode)
@@ -159,9 +160,9 @@ insertCookiesIntoRequest :: Req.Request                 -- ^ The request to inse
 insertCookiesIntoRequest request cookie_jar now
   | BS.null cookie_string = (request, cookie_jar')
   | otherwise = (request {Req.requestHeaders = cookie_header : purgedHeaders}, cookie_jar')
-  where purgedHeaders = L.deleteBy (\ (a, _) (b, _) -> a == b) (CI.mk $ "Cookie", BS.empty) $ Req.requestHeaders request
+  where purgedHeaders = L.deleteBy (\ (a, _) (b, _) -> a == b) (hCookie, BS.empty) $ Req.requestHeaders request
         (cookie_string, cookie_jar') = computeCookieString request cookie_jar now True
-        cookie_header = (CI.mk $ "Cookie", cookie_string)
+        cookie_header = (hCookie, cookie_string)
 
 -- | This corresponds to the algorithm described in Section 5.4 \"The Cookie Header\"
 computeCookieString :: Req.Request           -- ^ Input request
@@ -196,7 +197,7 @@ updateCookieJar :: Response a                   -- ^ Response received from serv
                 -> CookieJar                    -- ^ Current cookie jar
                 -> (CookieJar, Response a)      -- ^ (Updated cookie jar with cookies from the Response, The response stripped of any \"Set-Cookie\" header)
 updateCookieJar response request now cookie_jar = (cookie_jar', response { responseHeaders = other_headers })
-  where (set_cookie_headers, other_headers) = L.partition ((== (CI.mk $ "Set-Cookie")) . fst) $ responseHeaders response
+  where (set_cookie_headers, other_headers) = L.partition ((== hSetCookie) . fst) $ responseHeaders response
         set_cookie_data = map snd set_cookie_headers
         set_cookies = map parseSetCookie set_cookie_data
         cookie_jar' = foldl (\ cj sc -> receiveSetCookie sc request now True cj) cookie_jar set_cookies

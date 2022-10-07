@@ -132,32 +132,36 @@ socketConnection socket chunksize = makeConnection
     (sendAll socket)
     (NS.close socket)
 
-openSocketConnection :: (Socket -> IO ())
+openSocketConnection :: RequestTrace
+                     -> (Socket -> IO ())
                      -> Maybe HostAddress
                      -> String -- ^ host
                      -> Int -- ^ port
                      -> IO Connection
-openSocketConnection f = openSocketConnectionSize f 8192
+openSocketConnection hooks f = openSocketConnectionSize hooks f 8192
 
-openSocketConnectionSize :: (Socket -> IO ())
+openSocketConnectionSize :: RequestTrace
+                         -> (Socket -> IO ())
                          -> Int -- ^ chunk size
                          -> Maybe HostAddress
                          -> String -- ^ host
                          -> Int -- ^ port
                          -> IO Connection
-openSocketConnectionSize tweakSocket chunksize hostAddress' host' port' =
-    withSocket tweakSocket hostAddress' host' port' $ \ sock ->
+openSocketConnectionSize hooks tweakSocket chunksize hostAddress' host' port' =
+    withSocket hooks tweakSocket hostAddress' host' port' $ \ sock ->
         socketConnection sock chunksize
 
-withSocket :: (Socket -> IO ())
+withSocket :: RequestTrace
+           -> (Socket -> IO ())
            -> Maybe HostAddress
            -> String -- ^ host
            -> Int -- ^ port
            -> (Socket -> IO a)
            -> IO a
-withSocket tweakSocket hostAddress' host' port' f = do
+withSocket hooks tweakSocket hostAddress' host' port' f = do
     let hints = NS.defaultHints { NS.addrSocketType = NS.Stream }
-    addrs <- case hostAddress' of
+    dnsStart hooks $ DNSStartInfo host'
+    eaddrs <- E.try $ case hostAddress' of
         Nothing ->
             NS.getAddrInfo (Just hints) (Just host') (Just $ show port')
         Just ha ->
@@ -170,8 +174,15 @@ withSocket tweakSocket hostAddress' host' port' f = do
                  , NS.addrAddress = NS.SockAddrInet (toEnum port') ha
                  , NS.addrCanonName = Nothing
                  }]
-
-    E.bracketOnError (firstSuccessful addrs $ openSocket tweakSocket) NS.close f
+    case eaddrs of
+      Left err -> do
+        dnsDone hooks $ DNSDoneError err
+        E.throwIO err
+      Right addrs -> do
+        E.bracketOnError 
+          (firstSuccessful addrs $ openSocket tweakSocket) 
+          NS.close 
+          f
 
 openSocket tweakSocket addr =
     E.bracketOnError
